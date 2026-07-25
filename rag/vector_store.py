@@ -3,64 +3,127 @@ import pickle
 
 import faiss
 
-from rag.embeddings import model
+from rag.embeddings import create_embeddings
 
+
+# ==================================================
+# Paths
+# ==================================================
 
 VECTOR_STORE_DIR = "data/vector_store"
-INDEX_PATH = os.path.join(VECTOR_STORE_DIR, "index.faiss")
-CHUNKS_PATH = os.path.join(VECTOR_STORE_DIR, "chunks.pkl")
 
+INDEX_PATH = os.path.join(
+    VECTOR_STORE_DIR,
+    "index.faiss"
+)
+
+CHUNKS_PATH = os.path.join(
+    VECTOR_STORE_DIR,
+    "chunks.pkl"
+)
+
+
+# ==================================================
+# Build Vector Store
+# ==================================================
 
 def build_vector_store(chunks):
 
-    texts = [chunk["text"] for chunk in chunks]
+    if not chunks:
+        raise ValueError(
+            "Cannot build vector store with no chunks."
+        )
 
-    embeddings = model.encode(
-        texts,
-        convert_to_numpy=True,
-        normalize_embeddings=True
-    ).astype("float32")
+    texts = [
+        chunk["text"]
+        for chunk in chunks
+    ]
+
+    print(
+        f"Creating embeddings for "
+        f"{len(texts)} chunks..."
+    )
+
+    embeddings = create_embeddings(texts)
 
     dimension = embeddings.shape[1]
 
-    index = faiss.IndexFlatIP(dimension)
+    print(
+        "Embedding dimension:",
+        dimension
+    )
+
+    # Inner product + normalized vectors
+    # behaves like cosine similarity.
+    index = faiss.IndexFlatIP(
+        dimension
+    )
 
     index.add(embeddings)
 
     return index, chunks
 
 
+# ==================================================
+# Save Vector Store
+# ==================================================
+
 def save_vector_store(index, chunks):
 
-    os.makedirs(VECTOR_STORE_DIR, exist_ok=True)
+    os.makedirs(
+        VECTOR_STORE_DIR,
+        exist_ok=True
+    )
 
-    # Save FAISS index
-    faiss.write_index(index, INDEX_PATH)
+    faiss.write_index(
+        index,
+        INDEX_PATH
+    )
 
-    # Save chunks + metadata
-    with open(CHUNKS_PATH, "wb") as file:
-        pickle.dump(chunks, file)
+    with open(
+        CHUNKS_PATH,
+        "wb"
+    ) as file:
 
-    print("Vector store saved successfully.")
+        pickle.dump(
+            chunks,
+            file
+        )
 
+    print(
+        "Vector store saved successfully."
+    )
+
+
+# ==================================================
+# Load Vector Store
+# ==================================================
 
 def load_vector_store():
 
     if not os.path.exists(INDEX_PATH):
+
         raise FileNotFoundError(
-            "FAISS index not found. Build the vector store first."
+            "FAISS index not found. "
+            "Build the vector store first."
         )
 
     if not os.path.exists(CHUNKS_PATH):
+
         raise FileNotFoundError(
-            "Chunks file not found. Build the vector store first."
+            "Chunks file not found. "
+            "Build the vector store first."
         )
 
-    # Load FAISS
-    index = faiss.read_index(INDEX_PATH)
+    index = faiss.read_index(
+        INDEX_PATH
+    )
 
-    # Load chunks
-    with open(CHUNKS_PATH, "rb") as file:
+    with open(
+        CHUNKS_PATH,
+        "rb"
+    ) as file:
+
         chunks = pickle.load(file)
 
     return index, chunks

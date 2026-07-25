@@ -1,11 +1,10 @@
-import faiss
 import numpy as np
 
-from rag.embeddings import model
+from rag.embeddings import create_embedding
 
 
 # ==================================================
-# Retrieve Relevant Brochure Chunks
+# Retrieve Brochure Chunks
 # ==================================================
 
 def retrieve(
@@ -17,26 +16,30 @@ def retrieve(
     top_k=5,
     search_k=20
 ):
-    """
-    Retrieve brochure chunks relevant to the user's
-    question while filtering by selected brand/model.
-    """
 
     # ----------------------------------------------
-    # 1. Create query embedding
+    # Create query embedding using Gemini
     # ----------------------------------------------
 
-    query_embedding = model.encode(
-        [query],
-        convert_to_numpy=True,
-        normalize_embeddings=True
-    ).astype("float32")
+    query_embedding = create_embedding(
+        query,
+        task_type="RETRIEVAL_QUERY"
+    )
+
+    query_embedding = np.array(
+        [query_embedding],
+        dtype="float32"
+    )
+
 
     # ----------------------------------------------
-    # 2. Search FAISS
+    # Search FAISS
     # ----------------------------------------------
 
-    k = min(search_k, index.ntotal)
+    k = min(
+        search_k,
+        index.ntotal
+    )
 
     scores, indices = index.search(
         query_embedding,
@@ -45,8 +48,9 @@ def retrieve(
 
     results = []
 
+
     # ----------------------------------------------
-    # 3. Filter results by vehicle
+    # Filter selected vehicle
     # ----------------------------------------------
 
     for score, idx in zip(
@@ -75,18 +79,22 @@ def retrieve(
         )
 
         if (
-            chunk_brand.lower() == brand.lower()
+            chunk_brand.lower()
+            == brand.lower()
             and
-            chunk_model.lower() == car_model.lower()
+            chunk_model.lower()
+            == car_model.lower()
         ):
 
             results.append({
                 "score": float(score),
-                "text": chunk.get("text", ""),
+                "text": chunk.get(
+                    "text",
+                    ""
+                ),
                 "metadata": metadata
             })
 
-        # We have enough matching chunks
         if len(results) >= top_k:
             break
 
@@ -99,13 +107,15 @@ def retrieve(
 
 if __name__ == "__main__":
 
-    from rag.vector_store import load_vector_store
-
-    print("Loading vector store...")
+    from rag.vector_store import (
+        load_vector_store
+    )
 
     index, chunks = load_vector_store()
 
-    query = "How many airbags does Creta have?"
+    query = (
+        "How many airbags does Creta have?"
+    )
 
     results = retrieve(
         query=query,
@@ -119,21 +129,24 @@ if __name__ == "__main__":
     print("\nQuestion:")
     print(query)
 
-    print(
-        f"\nRetrieved {len(results)} results"
-    )
-
     for number, result in enumerate(
         results,
         start=1
     ):
 
         print("\n" + "=" * 60)
-        print("RESULT", number)
+
+        print(
+            "RESULT",
+            number
+        )
 
         print(
             "Score:",
-            round(result["score"], 4)
+            round(
+                result["score"],
+                4
+            )
         )
 
         print(
@@ -142,6 +155,7 @@ if __name__ == "__main__":
         )
 
         print("\nText:")
+
         print(
             result["text"][:500]
         )
