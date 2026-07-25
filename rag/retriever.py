@@ -4,6 +4,9 @@ import numpy as np
 from rag.embeddings import model
 
 
+# ==================================================
+# Retrieve Relevant Brochure Chunks
+# ==================================================
 
 def retrieve(
     query,
@@ -14,14 +17,25 @@ def retrieve(
     top_k=5,
     search_k=20
 ):
-    # Embed ONLY the user's question
+    """
+    Retrieve brochure chunks relevant to the user's
+    question while filtering by selected brand/model.
+    """
+
+    # ----------------------------------------------
+    # 1. Create query embedding
+    # ----------------------------------------------
+
     query_embedding = model.encode(
         [query],
         convert_to_numpy=True,
         normalize_embeddings=True
     ).astype("float32")
 
-    # Search more candidates than we ultimately need
+    # ----------------------------------------------
+    # 2. Search FAISS
+    # ----------------------------------------------
+
     k = min(search_k, index.ntotal)
 
     scores, indices = index.search(
@@ -31,34 +45,63 @@ def retrieve(
 
     results = []
 
-    for score, idx in zip(scores[0], indices[0]):
+    # ----------------------------------------------
+    # 3. Filter results by vehicle
+    # ----------------------------------------------
+
+    for score, idx in zip(
+        scores[0],
+        indices[0]
+    ):
 
         if idx == -1:
             continue
 
         chunk = chunks[idx]
-        metadata = chunk["metadata"]
 
-        # Metadata filtering
+        metadata = chunk.get(
+            "metadata",
+            {}
+        )
+
+        chunk_brand = metadata.get(
+            "brand",
+            ""
+        )
+
+        chunk_model = metadata.get(
+            "model",
+            ""
+        )
+
         if (
-            metadata["brand"].lower() == brand.lower()
-            and metadata["model"].lower() == car_model.lower()
+            chunk_brand.lower() == brand.lower()
+            and
+            chunk_model.lower() == car_model.lower()
         ):
+
             results.append({
                 "score": float(score),
-                "text": chunk["text"],
+                "text": chunk.get("text", ""),
                 "metadata": metadata
             })
 
-        # Stop once we have enough valid results
+        # We have enough matching chunks
         if len(results) >= top_k:
             break
 
     return results
 
+
+# ==================================================
+# Local Test
+# ==================================================
+
 if __name__ == "__main__":
 
     from rag.vector_store import load_vector_store
+
+    print("Loading vector store...")
 
     index, chunks = load_vector_store()
 
@@ -73,14 +116,32 @@ if __name__ == "__main__":
         top_k=5
     )
 
-    print("\nQuestion:", query)
+    print("\nQuestion:")
+    print(query)
 
-    for number, result in enumerate(results, start=1):
+    print(
+        f"\nRetrieved {len(results)} results"
+    )
+
+    for number, result in enumerate(
+        results,
+        start=1
+    ):
 
         print("\n" + "=" * 60)
         print("RESULT", number)
-        print("Score:", round(result["score"], 4))
-        print("Metadata:", result["metadata"])
+
+        print(
+            "Score:",
+            round(result["score"], 4)
+        )
+
+        print(
+            "Metadata:",
+            result["metadata"]
+        )
 
         print("\nText:")
-        print(result["text"][:500])
+        print(
+            result["text"][:500]
+        )
