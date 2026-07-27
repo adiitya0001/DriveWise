@@ -14,11 +14,11 @@ def retrieve(
     brand,
     car_model,
     top_k=5,
-    search_k=20
+    search_k=100
 ):
 
     # ----------------------------------------------
-    # Create query embedding using Gemini
+    # Create query embedding
     # ----------------------------------------------
 
     query_embedding = create_embedding(
@@ -50,7 +50,7 @@ def retrieve(
 
 
     # ----------------------------------------------
-    # Filter selected vehicle
+    # Filter by selected vehicle
     # ----------------------------------------------
 
     for score, idx in zip(
@@ -78,12 +78,12 @@ def retrieve(
             ""
         )
 
+        # Only keep chunks belonging to
+        # the selected vehicle
         if (
-            chunk_brand.lower()
-            == brand.lower()
+            chunk_brand.lower() == brand.lower()
             and
-            chunk_model.lower()
-            == car_model.lower()
+            chunk_model.lower() == car_model.lower()
         ):
 
             results.append({
@@ -95,8 +95,11 @@ def retrieve(
                 "metadata": metadata
             })
 
+        # Stop once enough vehicle-specific
+        # results have been found
         if len(results) >= top_k:
             break
+
 
     return results
 
@@ -107,27 +110,28 @@ def retrieve(
 
 if __name__ == "__main__":
 
-    from rag.vector_store import (
-        load_vector_store
-    )
+    from rag.vector_store import load_vector_store
 
     index, chunks = load_vector_store()
 
-    query = (
-        "How many airbags does Creta have?"
-    )
+    query = "What safety features does the Sierra have?"
 
     results = retrieve(
         query=query,
         index=index,
         chunks=chunks,
-        brand="Hyundai",
-        car_model="Creta",
+        brand="Tata",
+        car_model="Sierra",
         top_k=5
     )
 
     print("\nQuestion:")
     print(query)
+
+    print(
+        "\nResults found:",
+        len(results)
+    )
 
     for number, result in enumerate(
         results,
@@ -155,7 +159,4 @@ if __name__ == "__main__":
         )
 
         print("\nText:")
-
-        print(
-            result["text"][:500]
-        )
+        print(result["text"])

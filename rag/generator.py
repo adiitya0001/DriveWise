@@ -10,9 +10,9 @@ from rag.retriever import retrieve
 from rag.reranker import rerank
 
 
-# --------------------------------------------------
+# ==================================================
 # Gemini Setup
-# --------------------------------------------------
+# ==================================================
 
 load_dotenv()
 
@@ -25,6 +25,8 @@ if not api_key:
 
 client = genai.Client(api_key=api_key)
 
+MODEL_NAME = "gemini-3.6-flash"
+
 
 # ==================================================
 # Resolve Conversational Follow-Up Question
@@ -32,21 +34,13 @@ client = genai.Client(api_key=api_key)
 
 def resolve_question(query, history, brand, model):
 
-    # --------------------------------------------------
-    # First question: no conversation history needed
-    # --------------------------------------------------
-
+    # No history = already standalone
     if not history:
         return query
-
-    # --------------------------------------------------
-    # Build recent conversation context
-    # --------------------------------------------------
 
     history_parts = []
 
     for message in history[-3:]:
-
         history_parts.append(
             f"""
 User: {message["question"]}
@@ -56,145 +50,103 @@ DriveWise: {message["answer"]}
 
     history_text = "\n".join(history_parts)
 
-
-    # --------------------------------------------------
-    # Question Rewriting Prompt
-    # --------------------------------------------------
-
     prompt = f"""
-You are helping an automotive RAG retrieval system understand
-a user's follow-up question.
+You rewrite follow-up questions for an automotive brochure
+retrieval system.
 
-The user is currently asking questions about:
-
+Selected vehicle:
 Brand: {brand}
 Model: {model}
 
-
 RECENT CONVERSATION:
-
 {history_text}
 
-
-CURRENT USER QUESTION:
-
+CURRENT QUESTION:
 {query}
 
+Rewrite the current question so that it can be understood
+without the previous conversation.
 
-TASK:
-
-Rewrite the CURRENT USER QUESTION into one clear,
-standalone question that can be understood without seeing
-the previous conversation.
-
-
-RULES:
-
-1. Do NOT answer the question.
-
-2. Return ONLY the rewritten question.
-
-3. Do NOT add automotive facts.
-
-4. Do NOT use outside knowledge.
-
-5. Preserve the user's original intent.
-
-6. Resolve conversational references such as:
-
-   - it
-   - this
-   - that
-   - one
-   - ones
-   - those
-   - they
-   - them
-   - which one
-   - what about it
-   - what about the automatic
-   - what about the diesel
-
-7. Use the recent conversation only to understand
-   what the user is referring to.
-
-8. Include the selected brand and model when useful.
-
-9. Do not change a factual assumption into a new fact.
-
-10. Keep the rewritten question concise.
-
-
-EXAMPLE:
-
-Recent conversation:
-
-User:
-What engine options does Scorpio have?
-
-DriveWise:
-The Scorpio offers petrol and diesel engine options.
-
-Current question:
-
-Which one has more torque?
-
-Rewritten question:
-
-Which of the engine options available in the Mahindra Scorpio has more torque?
-
+Rules:
+- Do not answer the question.
+- Return only the rewritten question.
+- Preserve the user's meaning.
+- Resolve words such as it, this, that, one, those and they.
+- Use the selected vehicle when useful.
+- Do not add facts.
+- Keep it concise.
 
 REWRITTEN QUESTION:
 """
 
-
-    # --------------------------------------------------
-    # Gemini Question Resolution
-    # --------------------------------------------------
-
     try:
 
         response = client.models.generate_content(
-            model="gemini-3.6-flash",
+            model=MODEL_NAME,
             contents=prompt
         )
 
         if response.text:
 
-            rewritten_question = response.text.strip()
+            rewritten = response.text.strip()
 
             print(
                 "Resolved follow-up question:",
-                rewritten_question
+                rewritten
             )
 
-            return rewritten_question
-
+            return rewritten
 
     except Exception as error:
 
-        # Follow-up rewriting should NOT crash
-        # the entire RAG pipeline.
-
+        # Rewriting failure must not break RAG
         print(
             "Question resolution error:",
             type(error).__name__,
             error
         )
 
-
-    # --------------------------------------------------
-    # Fallback
-    # --------------------------------------------------
-
-    # If Gemini cannot rewrite the question,
-    # continue using the original question.
-
     return query
 
 
 # ==================================================
-# Generate Answer
+# Build Brochure Context
+# ==================================================
+
+def build_context(ranked_results):
+
+    context_parts = []
+
+    for number, result in enumerate(
+        ranked_results,
+        start=1
+    ):
+
+        metadata = result.get("metadata", {})
+
+        brand = metadata.get("brand", "")
+        model = metadata.get("model", "")
+        page = metadata.get("page", "")
+        section = metadata.get("section", "")
+        text = result.get("text", "")
+
+        context_parts.append(
+            f"""
+--- BROCHURE EXCERPT {number} ---
+
+Vehicle: {brand} {model}
+Section: {section}
+Internal page: {page}
+
+{text}
+"""
+        )
+
+    return "\n\n".join(context_parts)
+
+
+# ==================================================
+# Generate Grounded Answer
 # ==================================================
 
 def generate_answer(query, ranked_results):
@@ -206,93 +158,104 @@ def generate_answer(query, ranked_results):
             "in the selected brochure."
         )
 
+    context = build_context(ranked_results)
 
     # --------------------------------------------------
-    # Build context from retrieved brochure chunks
+    # Debug exactly what is being used
     # --------------------------------------------------
 
-    context_parts = []
+    print("\n" + "=" * 70)
+    print("GENERATOR INPUT")
+    print("=" * 70)
 
-    for result in ranked_results:
+    print("\nQuestion:")
+    print(query)
 
-        metadata = result["metadata"]
+    print("\nContext:")
+    print(context)
 
-        context_parts.append(
-            f"""
-Brand: {metadata['brand']}
-Model: {metadata['model']}
-Page: {metadata['page']}
-Section: {metadata['section']}
-
-Content:
-{result['text']}
-"""
-        )
-
-    context = "\n\n".join(context_parts)
-
+    print("=" * 70)
 
     # --------------------------------------------------
     # Grounded RAG Prompt
     # --------------------------------------------------
 
     prompt = f"""
-You are DriveWise, an AI automotive brochure assistant.
+You are DriveWise, an automotive brochure question-answering
+assistant.
 
-Answer the user's question using ONLY the brochure context
-provided below.
+Your job is to answer the USER QUESTION using the BROCHURE
+EXCERPTS below.
+
+The excerpts are retrieved from the brochure knowledge base.
+They may contain unrelated information as well as information
+relevant to the question.
+
+IMPORTANT EVIDENCE RULE:
+
+If ANY excerpt contains information that answers all or part
+of the user's question, use that information.
+
+Do not reject useful information merely because:
+- another excerpt is unrelated,
+- the relevant excerpt is not the first excerpt,
+- the excerpt contains additional information,
+- the information applies only to a specific variant,
+  engine, transmission or trim.
+
+For a broad question, combine relevant facts found across
+multiple excerpts.
 
 
 ANSWER RULES:
 
-1. Do not use outside knowledge.
+1. Use ONLY facts explicitly present in the brochure excerpts.
 
-2. Do not invent vehicle specifications, features,
-   variants, prices, availability, or other information.
+2. Never use outside automotive knowledge.
 
-3. Give the direct answer first.
+3. Never invent specifications, features, prices, variants,
+   availability or equipment.
 
-4. Do NOT include brochure page numbers inside the answer.
+4. Give the useful answer first.
 
-5. Do NOT include source citations inside the answer.
+5. For broad questions such as:
+   "What safety features does it have?"
+   "What are its main features?"
+   "Tell me about this car"
 
-6. Do NOT mention internal metadata such as:
-   - page numbers
-   - section names
-   - retrieval results
-   - chunks
+   summarize all clearly relevant information found in the
+   excerpts.
 
-7. Do NOT say phrases such as:
-   - "according to Page 3"
-   - "based on Page 4"
-   - "according to the provided context"
-   - "based on the provided brochure context"
+6. Use Markdown bullet points or short headings when they
+   make a broad answer easier to read.
 
-8. For simple factual questions, give a short and
-   direct answer.
+7. Preserve availability conditions.
 
-9. For broad questions such as:
-   - "Tell me about this car"
-   - "What are its main features?"
-   - "What safety features does it have?"
+   If an excerpt says a feature belongs to Smart+,
+   Accomplished, Accomplished+, a particular transmission,
+   engine or other configuration, state that condition.
 
-   organize the answer using Markdown headings
-   and bullet points when useful.
+8. Do not imply that variant-specific equipment is standard
+   on every variant.
 
-10. Preserve important conditions from the brochure.
+9. Do not mention:
+   - excerpt numbers
+   - retrieved chunks
+   - retrieval
+   - internal page numbers
+   - metadata
 
-    For example, if a feature is available only on a
-    particular variant, transmission, fuel type, or
-    drivetrain, clearly mention that condition.
+10. Do not include citations in the answer. The application
+    displays sources separately.
 
-11. Do not claim that a feature is standard across the
-    entire model range unless the brochure context
-    explicitly says it is standard.
+11. The fallback sentence should be used ONLY when none of
+    the excerpts contain information that answers the
+    question.
 
-12. If the brochure context does not contain enough
-    information to answer the question, respond exactly:
+12. If none of the excerpts contain relevant evidence,
+    respond exactly:
 
-    "I could not find this information in the selected brochure."
+I could not find this information in the selected brochure.
 
 
 USER QUESTION:
@@ -300,17 +263,21 @@ USER QUESTION:
 {query}
 
 
-BROCHURE CONTEXT:
+BROCHURE EXCERPTS:
 
 {context}
 
 
+Now determine whether the excerpts contain evidence relevant
+to the question.
+
+If they do, answer using that evidence.
+
 ANSWER:
 """
 
-
     # --------------------------------------------------
-    # Gemini Call With Retry Handling
+    # Gemini Call
     # --------------------------------------------------
 
     max_retries = 3
@@ -320,30 +287,39 @@ ANSWER:
         try:
 
             response = client.models.generate_content(
-                model="gemini-3.6-flash",
+                model=MODEL_NAME,
                 contents=prompt
             )
 
             if not response.text:
+
+                print(
+                    "Gemini returned an empty response."
+                )
 
                 return (
                     "I could not generate an answer "
                     "from the selected brochure."
                 )
 
-            return response.text.strip()
+            answer = response.text.strip()
 
+            print("\n" + "=" * 70)
+            print("GEMINI ANSWER")
+            print("=" * 70)
+            print(answer)
+            print("=" * 70)
+
+            return answer
 
         except ServerError as error:
-
-            # Retry if Gemini is temporarily unavailable
 
             if attempt < max_retries - 1:
 
                 wait_time = 3 * (attempt + 1)
 
                 print(
-                    f"Gemini is busy. "
+                    f"Gemini service error. "
                     f"Retrying in {wait_time} seconds..."
                 )
 
@@ -352,46 +328,49 @@ ANSWER:
             else:
 
                 print(
-                    "\nGemini service is currently unavailable."
+                    "Gemini service is currently unavailable."
                 )
 
-                print(
-                    "Please try again later."
-                )
+                raise
 
-                raise error
+        except Exception as error:
+
+            print(
+                "Gemini generation error:",
+                type(error).__name__,
+                error
+            )
+
+            raise
 
 
 # ==================================================
-# Test Complete RAG Pipeline
+# Local RAG Test
 # ==================================================
 
 if __name__ == "__main__":
 
-    # --------------------------------------------------
-    # 1. Load FAISS index + stored chunks
-    # --------------------------------------------------
-
+    # Load vector database
     index, chunks = load_vector_store()
 
-
     # --------------------------------------------------
-    # 2. Selected vehicle
-    # --------------------------------------------------
-
-    brand = "Hyundai"
-    car_model = "Creta"
-
-
-    # --------------------------------------------------
-    # 3. Test question
+    # TEST SIERRA
     # --------------------------------------------------
 
-    query = "How many airbags does Creta have?"
+    brand = "Tata"
+    car_model = "Sierra"
 
+    query = "What safety features does the Sierra have?"
+
+    print("\n" + "=" * 70)
+    print("DRIVEWISE LOCAL TEST")
+    print("=" * 70)
+
+    print("Vehicle:", brand, car_model)
+    print("Question:", query)
 
     # --------------------------------------------------
-    # 4. Retrieve relevant brochure chunks
+    # Retrieve more candidates
     # --------------------------------------------------
 
     results = retrieve(
@@ -400,23 +379,40 @@ if __name__ == "__main__":
         chunks=chunks,
         brand=brand,
         car_model=car_model,
-        top_k=5
+        top_k=10,
+        search_k=50
     )
 
+    print("\nRetrieved results:", len(results))
+
+    for i, result in enumerate(
+        results,
+        start=1
+    ):
+
+        print("\n" + "-" * 60)
+        print("RESULT", i)
+        print("Score:", result.get("score"))
+        print("Metadata:", result.get("metadata"))
+        print(result.get("text", "")[:800])
 
     # --------------------------------------------------
-    # 5. Re-rank results
+    # Keep top 5
     # --------------------------------------------------
 
     ranked_results = rerank(
         query=query,
         results=results,
-        top_k=3
+        top_k=5
     )
 
+    print(
+        "\nChunks sent to generator:",
+        len(ranked_results)
+    )
 
     # --------------------------------------------------
-    # 6. Generate answer
+    # Generate
     # --------------------------------------------------
 
     answer = generate_answer(
@@ -424,17 +420,8 @@ if __name__ == "__main__":
         ranked_results=ranked_results
     )
 
-
-    # --------------------------------------------------
-    # 7. Display result
-    # --------------------------------------------------
-
-    print("\n" + "=" * 60)
-
-    print("Question:")
-    print(query)
-
-    print("\nDriveWise:")
+    print("\n" + "=" * 70)
+    print("FINAL ANSWER")
+    print("=" * 70)
     print(answer)
-
-    print("=" * 60)
+    print("=" * 70)

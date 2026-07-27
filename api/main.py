@@ -344,7 +344,7 @@ def ask_question(request: QuestionRequest):
         )
 
 
-        # --------------------------------------------------
+                # --------------------------------------------------
         # 1. Retrieve Brochure Chunks
         # --------------------------------------------------
 
@@ -354,8 +354,21 @@ def ask_question(request: QuestionRequest):
             chunks=chunks,
             brand=brand,
             car_model=model,
-            top_k=5
+            top_k=10,
+            search_k=50
         )
+
+        print("\n" + "=" * 70)
+        print("RAW RETRIEVAL RESULTS")
+        print("=" * 70)
+
+        for i, result in enumerate(results, start=1):
+
+            print(f"\n--- RESULT {i} ---")
+            print("Score:", result.get("score"))
+            print("Metadata:", result.get("metadata"))
+            print("Text:")
+            print(result.get("text", "")[:1000])
 
 
         if not results:
@@ -376,7 +389,7 @@ def ask_question(request: QuestionRequest):
         ranked_results = rerank(
             query=retrieval_query,
             results=results,
-            top_k=3
+            top_k=5
         )
 
 
@@ -389,6 +402,40 @@ def ask_question(request: QuestionRequest):
 
 
         # --------------------------------------------------
+        # DEBUG: See exactly what Gemini receives
+        # --------------------------------------------------
+
+        print("\n" + "=" * 70)
+        print("FINAL CHUNKS SENT TO GEMINI")
+        print("=" * 70)
+
+        for i, result in enumerate(ranked_results, start=1):
+
+            print(f"\n--- CHUNK {i} ---")
+
+            print(
+                "Score:",
+                result.get("score")
+            )
+
+            print(
+                "Metadata:",
+                result.get("metadata")
+            )
+
+            print("Text:")
+
+            print(
+                result.get(
+                    "text",
+                    ""
+                )[:1500]
+            )
+
+        print("\n" + "=" * 70)
+
+
+        # --------------------------------------------------
         # 3. Generate Grounded Answer
         # --------------------------------------------------
 
@@ -396,6 +443,12 @@ def ask_question(request: QuestionRequest):
             query=question,
             ranked_results=ranked_results
         )
+
+        print("\n" + "=" * 70)
+        print("GENERATED ANSWER")
+        print("=" * 70)
+        print(answer)
+        print("=" * 70)
 
 
         # --------------------------------------------------
